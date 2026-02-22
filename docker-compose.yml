@@ -1,0 +1,35 @@
+  version: "3.9"
+
+  services:
+    telethon_scrapper:
+      build: .
+      stdin_open: true
+      tty: true
+      restart: always
+      depends_on:
+        - mongo_db
+      volumes:
+        - .:/app
+      env_file:
+        - .env
+
+    mongo_db:
+      image: mongo:7
+      restart: always
+      env_file:
+        - .env
+      volumes:
+        - mongo_data:/data/db
+
+    mongo-express:
+      image: mongo-express
+      restart: always
+      ports:
+        - "8081:8081"
+      env_file:
+        - .env
+      depends_on:
+        - mongo_db
+
+  volumes:
+    mongo_data:
