@@ -1,4 +1,4 @@
-from beanie import Document
+from beanie import Document , Indexed
 from pydantic import BaseModel, Field
 from typing import Optional
 from datetime import datetime
@@ -32,7 +32,7 @@ class MongoMessageMedia(Document):
     file_type: str
     mime_type: str
     file_size: int
-    file_hash: str
+    file_hash: Indexed(str, unique=True)
 
     extra_refs: Optional[MongoExtraReference] = None
 
@@ -44,6 +44,5 @@ class MongoMessageMedia(Document):
     class Settings:
         name = "media_messages"
         indexes = [
-        {"key": [("file_hash", 1)], "unique": True},
-        {"key": [("status", 1)]},
+            "status"
         ]

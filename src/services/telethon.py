@@ -218,6 +218,8 @@ class TelethonScrapper:
 
             if self._scraper_config.download_media:
                 os.makedirs(self._scraper_config.download_path, exist_ok=True)
+                
+                logger.info("Downloading started...")
 
                 file_path = await message.download_media(
                     file=self._scraper_config.download_path

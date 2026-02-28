@@ -19,7 +19,7 @@ async def main():
     """
     initialise Telethon
     """
-    telethon = TelethonScrapper(config=Config, scrapper_config=ScraperConfig)
+    telethon = TelethonScrapper(config=Config, scrapper_config=ScraperConfig , db=mongo)
 
     await telethon.run()
     logger.info("Telethon client initialized...")
