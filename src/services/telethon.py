@@ -1,6 +1,9 @@
 import asyncio
 import os
 import sys
+import time
+import hashlib
+from datetime import datetime
 
 from loguru import logger
 from telethon import TelegramClient, events
@@ -15,19 +18,14 @@ from telethon.tl.types import (
 from src.core.srrapper_config import ChatType, MediaType, ScraperSettings
 from src.schema.telethon_schema import ConfigSchema
 from src.db.mongo.message_model import DownloadStatus
-import hashlib
-from datetime import datetime
+
 
 class TelethonScrapper:
-    def __init__(self, config: ConfigSchema, scrapper_config: ScraperSettings , db):
+    def __init__(self, config: ConfigSchema, scrapper_config: ScraperSettings, db):
         self._config = config
         self._scraper_config = scrapper_config
         self._client: TelegramClient | None = None
         self._db = db
-
-    """
-    function to initialize and authenticate to the telegram with mt-proto session
-    """
 
     async def initialize(self):
         try:
@@ -43,8 +41,6 @@ class TelethonScrapper:
                 logger.info("User is not authorized")
 
                 await self._client.send_code_request(self._config.phone_number)
-                logger.info(f"please enter otp sent to: {self._config.phone_number}")
-
                 otp = (await asyncio.to_thread(input, "Enter OTP: ")).strip()
 
                 try:
@@ -57,7 +53,7 @@ class TelethonScrapper:
                     sys.exit(1)
 
         except Exception:
-            logger.exception("Exception in initializing the Telethon")
+            logger.exception("Exception initializing Telethon")
             sys.exit(1)
 
     async def real_time_scrapping(self):
@@ -67,14 +63,11 @@ class TelethonScrapper:
             try:
                 entity = await self._client.get_entity(chat)
                 valid_chats.append(entity)
-
             except Exception:
                 logger.error(f"Invalid chat skipped: {chat}")
 
         if not valid_chats:
-            logger.warning(
-                "No valid chats found. Scraper will not listen to any chats."
-            )
+            logger.warning("No valid chats found.")
             return
 
         self._client.add_event_handler(
@@ -86,7 +79,7 @@ class TelethonScrapper:
 
     async def historical_scrapping(self):
         if not self._scraper_config.history_enabled:
-            logger.info("Historical scraping is disabled in config.")
+            logger.info("Historical scraping disabled.")
             return
 
         valid_chats = []
@@ -99,7 +92,7 @@ class TelethonScrapper:
                 logger.error(f"Invalid chat skipped: {chat}")
 
         if not valid_chats:
-            logger.warning("No valid chats found for historical scraping.")
+            logger.warning("No valid chats found for history.")
             return
 
         logger.info(f"Starting historical scraping for {len(valid_chats)} chats")
@@ -111,25 +104,19 @@ class TelethonScrapper:
                 chat,
                 limit=self._scraper_config.history_limit
             ):
-                if not message:
-                    continue
-
-                # Wrap message in pseudo event style logic
-                if message.media:
+                if message and message.media:
                     await self._handle_media(message)
 
         logger.info("Historical scraping completed.")
-        
+
     async def handle_event(self, event):
         message = event.message
         logger.info(f"New message received | chat_id={event.chat_id}")
 
         chat = await event.get_chat()
         if not self._is_allowed_chat_type(chat):
-            logger.warning("Chat type is not supported supported streams channel / user / group")
             return
 
-        # MEDIA SCRAPING
         if message.media:
             await self._handle_media(message)
 
@@ -137,17 +124,14 @@ class TelethonScrapper:
         if isinstance(chat, Channel):
             if chat.broadcast and ChatType.CHANNEL in self._scraper_config.chat_types:
                 return True
-
             if chat.megagroup and ChatType.GROUP in self._scraper_config.chat_types:
                 return True
 
         if isinstance(chat, Chat):
-            if ChatType.GROUP in self._scraper_config.chat_types:
-                return True
+            return ChatType.GROUP in self._scraper_config.chat_types
 
         if isinstance(chat, User):
-            if ChatType.USER in self._scraper_config.chat_types:
-                return True
+            return ChatType.USER in self._scraper_config.chat_types
 
         return False
 
@@ -159,17 +143,6 @@ class TelethonScrapper:
         if not file:
             return
 
-        # ---- Size filtering ----
-        if file.size:
-            size_kb = file.size / 1024
-            size_mb = size_kb / 1024
-
-            if self._scraper_config.min_file_size_kb and size_kb < self._scraper_config.min_file_size_kb:
-                return
-
-            if self._scraper_config.max_file_size_mb and size_mb > self._scraper_config.max_file_size_mb:
-                return
-
         media_type = self._detect_media_type(message)
         if not media_type:
             return
@@ -180,18 +153,20 @@ class TelethonScrapper:
         file_name = file.name or ""
         mime_type = file.mime_type or ""
         file_size = file.size or 0
+
         access_hash = None
         if isinstance(message.media, MessageMediaDocument):
-             access_hash = message.media.document.access_hash
+            access_hash = message.media.document.access_hash
 
-        # ---- Create hash for deduplication ----
+        # Generate file hash
         hash_input = f"{file_name}-{file_size}-{access_hash}"
         file_hash = hashlib.sha256(hash_input.encode()).hexdigest()
 
-        # ---- Insert PENDING record ----
+        chat = await message.get_chat()
+
         mongo_data = {
-            "chat_type": str(type(await message.get_chat()).__name__),
-            "chat_name": (await message.get_chat()).username or "unknown",
+            "chat_type": type(chat).__name__,
+            "chat_name": getattr(chat, "username", None) or "unknown",
             "message_id": message.id,
             "message_date": message.date,
             "scraped_at": datetime.utcnow(),
@@ -205,54 +180,67 @@ class TelethonScrapper:
         }
 
         db_doc = await self._db.create(mongo_data)
-        
         if not db_doc:
-            """
-            file already exists in the database no need to add duplicates
-            """
-            return
+            return  # Duplicate
 
         try:
-            # ---- Update status to DOWNLOADING ----
             await self._db.update_status(str(db_doc.id), DownloadStatus.DOWNLOADING)
 
             if self._scraper_config.download_media:
                 os.makedirs(self._scraper_config.download_path, exist_ok=True)
-                
-                logger.info("Downloading started...")
+
+                logger.info(f"[{message.id}] Download started")
+
+                start_time = time.time()
+                last_logged_percent = 0
+
+                async def progress_callback(current, total):
+                    nonlocal last_logged_percent
+
+                    if total == 0:
+                        return
+
+                    percent = int((current / total) * 100)
+
+                    if percent >= last_logged_percent + 5:
+                        last_logged_percent = percent
+
+                        elapsed = time.time() - start_time
+                        speed = current / elapsed if elapsed > 0 else 0
+                        speed_mb = speed / (1024 * 1024)
+
+                        logger.info(
+                            f"[{message.id}] {percent}% | "
+                            f"{current // (1024*1024)}MB/"
+                            f"{total // (1024*1024)}MB | "
+                            f"{speed_mb:.2f} MB/s"
+                        )
 
                 file_path = await message.download_media(
-                    file=self._scraper_config.download_path
+                    file=self._scraper_config.download_path,
+                    progress_callback=progress_callback,
                 )
 
-                logger.info(f"Media downloaded: {file_path}")
+                logger.info(f"[{message.id}] Download completed → {file_path}")
 
-            # ---- Update status to DONE ----
             await self._db.update_status(str(db_doc.id), DownloadStatus.DONE)
 
-        except Exception as e:
+        except Exception:
             logger.exception("Download failed")
-
-            # ---- Update status to FAILED ----
             await self._db.update_status(str(db_doc.id), DownloadStatus.FAILED)
-            
-            
+
     def _detect_media_type(self, message) -> MediaType | None:
         if isinstance(message.media, MessageMediaPhoto):
             return MediaType.PHOTO
 
         if isinstance(message.media, MessageMediaDocument):
             mime = message.file.mime_type or ""
-
             if "video" in mime:
                 return MediaType.VIDEO
-
             if "audio" in mime:
                 return MediaType.AUDIO
-
             if "gif" in mime:
                 return MediaType.GIF
-
             return MediaType.DOCUMENT
 
         return None
