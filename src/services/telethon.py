@@ -87,6 +87,7 @@ class TelethonScrapper:
 
         chat = await event.get_chat()
         if not self._is_allowed_chat_type(chat):
+            logger.warning("Chat type is not supported supported streams channel / user / group")
             return
 
         # MEDIA SCRAPING
@@ -116,6 +117,7 @@ class TelethonScrapper:
         if no media is enabled than return
         """
         if not self._scraper_config.media_enabled:
+            logger.warning("Media scrapping is not enabled in configuration please enable it scrap the media")
             return
 
         """
@@ -123,6 +125,7 @@ class TelethonScrapper:
         """
         file = message.file
         if not file:
+            logger.warning("No attached file found in the message.")
             return
 
         """
@@ -134,10 +137,12 @@ class TelethonScrapper:
 
             if self._scraper_config.min_file_size_kb is not None:
                 if size_kb < self._scraper_config.min_file_size_kb:
+                    logger.warning("File size is not in the defined range check config to increase or decrease the limit")
                     return
 
             if self._scraper_config.max_file_size_mb is not None:
                 if size_mb > self._scraper_config.max_file_size_mb:
+                    logger.warning("File size is not in the defined range check config to increase or decrease the limit")
                     return
 
         """
@@ -145,6 +150,7 @@ class TelethonScrapper:
         """
         media_type = self._detect_media_type(message)
         if not media_type:
+            logger.warning("type of media is not supported")
             return
 
         if not self._scraper_config.media_types.get(media_type, False):
@@ -177,7 +183,7 @@ class TelethonScrapper:
         """
         if self._scraper_config.download_media:
             os.makedirs(self._scraper_config.download_path, exist_ok=True)
-
+            logger.info("media downloaded started")
             file_path = await message.download_media(
                 file=self._scraper_config.download_path
             )

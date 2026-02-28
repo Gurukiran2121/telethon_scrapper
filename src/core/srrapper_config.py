@@ -37,7 +37,7 @@ class ScraperSettings(BaseModel):
         }
     )
 
-    chat_types: List[ChatType] = Field(default_factory=lambda: [ChatType.CHANNEL])
+    chat_types: List[ChatType] = Field(default_factory=lambda: [ChatType.CHANNEL , ChatType.USER , ChatType.GROUP])
 
     keywords: List[str] = Field(default_factory=list)
     exclude_keywords: List[str] = Field(default_factory=list)
