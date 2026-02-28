@@ -51,6 +51,9 @@ class ScraperSettings(BaseModel):
 
     allowed_file_extensions: List[str] = Field(default_factory=lambda: [".txt"])
     allowed_mime_types: List[str] = Field(default_factory=lambda: ["text/plain"])
+    
+    history_enabled : bool = True
+    history_limit: int | None = 100
 
 
 ScraperConfig = ScraperSettings()

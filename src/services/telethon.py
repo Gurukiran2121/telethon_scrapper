@@ -81,6 +81,42 @@ class TelethonScrapper:
         logger.info(f"Realtime scraping started for {len(valid_chats)} chats")
         await self._client.run_until_disconnected()
 
+    async def historical_scrapping(self):
+        if not self._scraper_config.history_enabled:
+            logger.info("Historical scraping is disabled in config.")
+            return
+
+        valid_chats = []
+
+        for chat in self._scraper_config.chats:
+            try:
+                entity = await self._client.get_entity(chat)
+                valid_chats.append(entity)
+            except Exception:
+                logger.error(f"Invalid chat skipped: {chat}")
+
+        if not valid_chats:
+            logger.warning("No valid chats found for historical scraping.")
+            return
+
+        logger.info(f"Starting historical scraping for {len(valid_chats)} chats")
+
+        for chat in valid_chats:
+            logger.info(f"Fetching history for chat: {chat.id}")
+
+            async for message in self._client.iter_messages(
+                chat,
+                limit=self._scraper_config.history_limit
+            ):
+                if not message:
+                    continue
+
+                # Wrap message in pseudo event style logic
+                if message.media:
+                    await self._handle_media(message)
+
+        logger.info("Historical scraping completed.")
+        
     async def handle_event(self, event):
         message = event.message
         logger.info(f"New message received | chat_id={event.chat_id}")
@@ -215,4 +251,5 @@ class TelethonScrapper:
 
     async def run(self):
         await self.initialize()
+        await self.historical_scrapping()
         await self.real_time_scrapping()
