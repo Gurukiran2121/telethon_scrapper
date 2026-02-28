@@ -202,7 +202,7 @@ class TelethonScrapper:
 
                     percent = int((current / total) * 100)
 
-                    if percent >= last_logged_percent + 5:
+                    if percent >= last_logged_percent + 1:
                         last_logged_percent = percent
 
                         elapsed = time.time() - start_time
