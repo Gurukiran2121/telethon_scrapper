@@ -3,7 +3,6 @@ from enum import Enum
 from typing import Optional
 from datetime import datetime
 
-
 class DownloadStatus(str, Enum):
     PENDING = "pending"
     DOWNLOADING = "downloading"

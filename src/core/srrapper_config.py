@@ -54,6 +54,8 @@ class ScraperSettings(BaseModel):
     
     history_enabled : bool = True
     history_limit: int | None = 100
+    
+
 
 
 ScraperConfig = ScraperSettings()

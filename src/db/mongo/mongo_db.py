@@ -3,7 +3,10 @@ from beanie import init_beanie , PydanticObjectId
 from typing import Optional, List
 from motor.motor_asyncio import AsyncIOMotorClient
 from src.db.mongo.message_model import MongoMessageMedia
-import datetime
+from datetime import datetime
+from pymongo.errors import DuplicateKeyError
+
+
 
 class MongoDB(BaseDB):
     def __init__(self , uri : str , db_name : str):
@@ -15,14 +18,20 @@ class MongoDB(BaseDB):
             database=self.__db,
             document_models=[MongoMessageMedia]
         )
-        
+    
 
     """
     create document
     """
     async def create(self, data : dict)-> MongoMessageMedia:
-        doc = MongoMessageMedia(**data)
-        return await doc.insert()
+        try:
+            doc = MongoMessageMedia(**data)
+            return await doc.insert()
+        
+        except DuplicateKeyError:
+            logger.info("Duplicate file detected (DB level). Skipping.")
+            return None
+            
     
     """
     Get by id

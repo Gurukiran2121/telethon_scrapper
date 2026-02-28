@@ -14,13 +14,16 @@ from telethon.tl.types import (
 
 from src.core.srrapper_config import ChatType, MediaType, ScraperSettings
 from src.schema.telethon_schema import ConfigSchema
-
+from src.db.mongo.message_model import DownloadStatus
+import hashlib
+from datetime import datetime
 
 class TelethonScrapper:
-    def __init__(self, config: ConfigSchema, scrapper_config: ScraperSettings):
+    def __init__(self, config: ConfigSchema, scrapper_config: ScraperSettings , db):
         self._config = config
         self._scraper_config = scrapper_config
         self._client: TelegramClient | None = None
+        self._db = db
 
     """
     function to initialize and authenticate to the telegram with mt-proto session
@@ -149,86 +152,89 @@ class TelethonScrapper:
         return False
 
     async def _handle_media(self, message):
-        """
-        if no media is enabled than return
-        """
         if not self._scraper_config.media_enabled:
-            logger.warning("Media scrapping is not enabled in configuration please enable it scrap the media")
             return
 
-        """
-        if no file found just return
-        """
         file = message.file
         if not file:
-            logger.warning("No attached file found in the message.")
             return
 
-        """
-        check for the file size range filter
-        """
+        # ---- Size filtering ----
         if file.size:
             size_kb = file.size / 1024
             size_mb = size_kb / 1024
 
-            if self._scraper_config.min_file_size_kb is not None:
-                if size_kb < self._scraper_config.min_file_size_kb:
-                    logger.warning("File size is not in the defined range check config to increase or decrease the limit")
-                    return
+            if self._scraper_config.min_file_size_kb and size_kb < self._scraper_config.min_file_size_kb:
+                return
 
-            if self._scraper_config.max_file_size_mb is not None:
-                if size_mb > self._scraper_config.max_file_size_mb:
-                    logger.warning("File size is not in the defined range check config to increase or decrease the limit")
-                    return
+            if self._scraper_config.max_file_size_mb and size_mb > self._scraper_config.max_file_size_mb:
+                return
 
-        """
-        if no media type than return
-        """
         media_type = self._detect_media_type(message)
         if not media_type:
-            logger.warning("type of media is not supported")
             return
 
         if not self._scraper_config.media_types.get(media_type, False):
             return
 
-        logger.info(f"Media detected: {media_type}")
-
-        """
-        check if the file type is supported by configuration if not return
-        """
         file_name = file.name or ""
-        if self._scraper_config.allowed_file_extensions:
-            if not any(
-                file_name.lower().endswith(ext.lower())
-                for ext in self._scraper_config.allowed_file_extensions
-            ):
-                return
-
-        # MIME check
         mime_type = file.mime_type or ""
-        if self._scraper_config.allowed_mime_types:
-            if not any(
-                allowed in mime_type
-                for allowed in self._scraper_config.allowed_mime_types
-            ):
-                return
+        file_size = file.size or 0
+        access_hash = None
+        if isinstance(message.media, MessageMediaDocument):
+             access_hash = message.media.document.access_hash
 
-        """
-        if media download is enabled in teh cofig and path is avilable download the media
-        """
-        if self._scraper_config.download_media:
-            os.makedirs(self._scraper_config.download_path, exist_ok=True)
-            logger.info("media downloaded started")
-            file_path = await message.download_media(
-                file=self._scraper_config.download_path
-            )
+        # ---- Create hash for deduplication ----
+        hash_input = f"{file_name}-{file_size}-{access_hash}"
+        file_hash = hashlib.sha256(hash_input.encode()).hexdigest()
 
-            logger.info(f"Media downloaded: {file_path}")
+        # ---- Insert PENDING record ----
+        mongo_data = {
+            "chat_type": str(type(await message.get_chat()).__name__),
+            "chat_name": (await message.get_chat()).username or "unknown",
+            "message_id": message.id,
+            "message_date": message.date,
+            "scraped_at": datetime.utcnow(),
+            "status": DownloadStatus.PENDING,
+            "filename": file_name,
+            "file_type": file_name.split(".")[-1] if "." in file_name else "",
+            "mime_type": mime_type,
+            "file_size": file_size,
+            "file_hash": file_hash,
+            "access_hash": access_hash,
+        }
 
-        else:
-            logger.info("Media metadata captured (download disabled)")
+        db_doc = await self._db.create(mongo_data)
+        
+        if not db_doc:
+            """
+            file already exists in the database no need to add duplicates
+            """
+            return
 
+        try:
+            # ---- Update status to DOWNLOADING ----
+            await self._db.update_status(str(db_doc.id), DownloadStatus.DOWNLOADING)
+
+            if self._scraper_config.download_media:
+                os.makedirs(self._scraper_config.download_path, exist_ok=True)
+
+                file_path = await message.download_media(
+                    file=self._scraper_config.download_path
+                )
+
+                logger.info(f"Media downloaded: {file_path}")
+
+            # ---- Update status to DONE ----
+            await self._db.update_status(str(db_doc.id), DownloadStatus.DONE)
+
+        except Exception as e:
+            logger.exception("Download failed")
+
+            # ---- Update status to FAILED ----
+            await self._db.update_status(str(db_doc.id), DownloadStatus.FAILED)
+            
+            
     def _detect_media_type(self, message) -> MediaType | None:
         if isinstance(message.media, MessageMediaPhoto):
             return MediaType.PHOTO

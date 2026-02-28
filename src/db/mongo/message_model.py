@@ -44,7 +44,6 @@ class MongoMessageMedia(Document):
     class Settings:
         name = "media_messages"
         indexes = [
-            "message_id",
-            "file_hash",
-            "status",
+        {"key": [("file_hash", 1)], "unique": True},
+        {"key": [("status", 1)]},
         ]
