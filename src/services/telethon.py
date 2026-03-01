@@ -18,43 +18,23 @@ from telethon.tl.types import (
 from src.core.srrapper_config import ChatType, MediaType, ScraperSettings
 from src.schema.telethon_schema import ConfigSchema
 from src.db.mongo.message_model import DownloadStatus
+from src.services.download import DownloadService
 
 
 class TelethonScrapper:
-    def __init__(self, config: ConfigSchema, scrapper_config: ScraperSettings, db):
+    def __init__(
+        self, 
+        client: TelegramClient,
+        config: ConfigSchema, 
+        scrapper_config: ScraperSettings, 
+        db,
+        download_service: DownloadService
+    ):
+        self._client = client
         self._config = config
         self._scraper_config = scrapper_config
-        self._client: TelegramClient | None = None
         self._db = db
-
-    async def initialize(self):
-        try:
-            self._client = TelegramClient(
-                session=self._config.session_name,
-                api_id=self._config.api_id,
-                api_hash=self._config.api_hash,
-            )
-
-            await self._client.connect()
-
-            if not await self._client.is_user_authorized():
-                logger.info("User is not authorized")
-
-                await self._client.send_code_request(self._config.phone_number)
-                otp = (await asyncio.to_thread(input, "Enter OTP: ")).strip()
-
-                try:
-                    await self._client.sign_in(
-                        phone=self._config.phone_number, code=otp
-                    )
-                    logger.info("Sign in Successful")
-                except Exception:
-                    logger.exception("Login failed")
-                    sys.exit(1)
-
-        except Exception:
-            logger.exception("Exception initializing Telethon")
-            sys.exit(1)
+        self._download_service = download_service
 
     async def real_time_scrapping(self):
         valid_chats = []
@@ -75,6 +55,7 @@ class TelethonScrapper:
         )
 
         logger.info(f"Realtime scraping started for {len(valid_chats)} chats")
+        # Note: run_until_disconnected should be called in main or handled appropriately
         await self._client.run_until_disconnected()
 
     async def historical_scrapping(self):
@@ -183,51 +164,9 @@ class TelethonScrapper:
         if not db_doc:
             return  # Duplicate
 
-        try:
-            await self._db.update_status(str(db_doc.id), DownloadStatus.DOWNLOADING)
-
-            if self._scraper_config.download_media:
-                os.makedirs(self._scraper_config.download_path, exist_ok=True)
-
-                logger.info(f"[{message.id}] Download started")
-
-                start_time = time.time()
-                last_logged_percent = 0
-
-                async def progress_callback(current, total):
-                    nonlocal last_logged_percent
-
-                    if total == 0:
-                        return
-
-                    percent = int((current / total) * 100)
-
-                    if percent >= last_logged_percent + 1:
-                        last_logged_percent = percent
-
-                        elapsed = time.time() - start_time
-                        speed = current / elapsed if elapsed > 0 else 0
-                        speed_mb = speed / (1024 * 1024)
-
-                        logger.info(
-                            f"[{message.id}] {percent}% | "
-                            f"{current // (1024*1024)}MB/"
-                            f"{total // (1024*1024)}MB | "
-                            f"{speed_mb:.2f} MB/s"
-                        )
-
-                file_path = await message.download_media(
-                    file=self._scraper_config.download_path,
-                    progress_callback=progress_callback,
-                )
-
-                logger.info(f"[{message.id}] Download completed → {file_path}")
-
-            await self._db.update_status(str(db_doc.id), DownloadStatus.DONE)
-
-        except Exception:
-            logger.exception("Download failed")
-            await self._db.update_status(str(db_doc.id), DownloadStatus.FAILED)
+        if self._scraper_config.download_media:
+            # Enqueue for asynchronous download
+            await self._download_service.enqueue_download(message, str(db_doc.id))
 
     def _detect_media_type(self, message) -> MediaType | None:
         if isinstance(message.media, MessageMediaPhoto):
@@ -246,6 +185,6 @@ class TelethonScrapper:
         return None
 
     async def run(self):
-        await self.initialize()
-        await self.historical_scrapping()
+        # We start historical scraping in a task so it doesn't block real-time scraping setup
+        asyncio.create_task(self.historical_scrapping())
         await self.real_time_scrapping()

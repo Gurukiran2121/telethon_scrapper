@@ -5,6 +5,7 @@ from motor.motor_asyncio import AsyncIOMotorClient
 from src.db.mongo.message_model import MongoMessageMedia
 from datetime import datetime
 from pymongo.errors import DuplicateKeyError
+from loguru import logger
 
 
 

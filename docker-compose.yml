@@ -10,6 +10,7 @@
         - mongo_db
       volumes:
         - .:/app
+        - ./beyond-cloud-prod2-f59d438ab567.json:/app/gcs-key.json
       env_file:
         - .env
 

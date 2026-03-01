@@ -38,6 +38,10 @@ class MongoMessageMedia(Document):
 
     access_hash: int
 
+    local_path: Optional[str] = None
+    gcs_path: Optional[str] = None
+    downloaded_at: Optional[datetime] = None
+
     created_at: datetime = Field(default_factory=datetime.utcnow)
     updated_at: datetime = Field(default_factory=datetime.utcnow)
 
