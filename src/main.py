@@ -1,6 +1,7 @@
 import uvloop
 import asyncio
 import sys
+import uvicorn
 from loguru import logger
 from telethon import TelegramClient
 
@@ -9,6 +10,7 @@ from src.core.srrapper_config import ScraperConfig
 from src.db.mongo.mongo_db import MongoDB
 from src.services.telethon import TelethonScrapper
 from src.services.download import DownloadService
+from src.api.main import create_app
 
 
 async def main():
@@ -38,14 +40,13 @@ async def main():
             sys.exit(1)
 
     # 3. Initialize High-Performance Download Service
-    # max_concurrent_files defines how many parallel file pipelines to run
     download_service = DownloadService(
         client=client, 
         db=mongo, 
         max_concurrent_files=Config.max_concurrent_files
     )
     await download_service.start()
-    logger.info(f"Download Service initialized with {Config.max_concurrent_files} concurrent pipelines...")
+    logger.info(f"Download Service initialized...")
 
     # 4. Initialize Telethon Scrapper
     telethon = TelethonScrapper(
@@ -56,8 +57,20 @@ async def main():
         download_service=download_service
     )
 
-    logger.info("Telethon scrapper starting...")
-    await telethon.run()
+    # 5. Setup FastAPI
+    app = create_app(telethon, mongo)
+    
+    # Configure Uvicorn to run alongside our scraper
+    config = uvicorn.Config(app=app, host="0.0.0.0", port=8080, log_level="info")
+    server = uvicorn.Server(config)
+
+    logger.info("Starting Telethon scrapper and API server...")
+    
+    # Run both as concurrent tasks
+    await asyncio.gather(
+        telethon.run(),
+        server.serve()
+    )
 
 
 if __name__ == "__main__":

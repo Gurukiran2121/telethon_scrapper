@@ -9,6 +9,7 @@ from telethon import TelegramClient, utils, types
 from src.core.config import Config
 from src.core.bounded_buffer import BoundedBuffer
 from src.core.resource_governor import ResourceGovernor
+from src.core.state import GlobalState
 from src.db.mongo.message_model import DownloadStatus
 from src.db.mongo.mongo_db import MongoDB
 from src.services.parallel_download import ParallelTransferrer
@@ -77,8 +78,7 @@ class DownloadService:
             # Clean folder name for GCS
             safe_chat_name = re.sub(r"[^a-zA-Z0-9_\-]", "_", chat_name)
             
-            # Simplified path: chat_name/file_name
-            # If Config.gcs_root_folder is set, prepend it
+            # Combine root folder if provided
             if Config.gcs_root_folder:
                 gcs_path = f"{Config.gcs_root_folder.strip('/')}/{safe_chat_name}/{file_name}"
             else:
@@ -90,9 +90,12 @@ class DownloadService:
             connections = adaptive_config["connections"]
             agg_size_mb = adaptive_config["aggregation_size_mb"]
 
-            logger.info(
-                f"[{message.id}] Starting Pipeline: {file_name} ({file_size/1024/1024:.2f} MB) | "
-                f"Buf={buffer_mb}MB, Conn={connections}"
+            # Initialize real-time state tracking
+            GlobalState.update_job(
+                message_id=message.id,
+                filename=file_name,
+                chat_name=chat_name,
+                total_size=file_size
             )
 
             # 3. Setup Bounded Buffer (Memory Safety)
@@ -105,9 +108,6 @@ class DownloadService:
             part_size = 1024 * 1024
             aligned_dl_offset = (gcs_resume_point // part_size) * part_size
             skip_bytes = gcs_resume_point - aligned_dl_offset
-
-            if gcs_resume_point > 0:
-                logger.info(f"[{message.id}] Resuming from {gcs_resume_point/1024/1024:.2f}MB")
 
             # 5. Initialize Downloader
             dc_id, input_location = utils.get_input_location(message.media.document if hasattr(message.media, 'document') else message.media)
@@ -122,10 +122,19 @@ class DownloadService:
             def on_progress(current, total):
                 nonlocal last_log
                 percent = (current / total) * 100
-                if percent >= last_log + 10: # Log every 10%
+                elapsed = time.time() - start_time
+                speed = (current - gcs_resume_point) / elapsed if elapsed > 0 else 0
+                
+                # Update shared API state
+                GlobalState.update_job(
+                    message_id=message.id,
+                    downloaded_size=current,
+                    progress_percent=round(percent, 2),
+                    speed_mb_s=round(speed / (1024 * 1024), 2)
+                )
+
+                if percent >= last_log + 10: # Log to console every 10%
                     last_log = int(percent)
-                    elapsed = time.time() - start_time
-                    speed = (current - gcs_resume_point) / elapsed if elapsed > 0 else 0
                     logger.info(f"[{message.id}] Progress: {percent:.1f}% | Speed: {speed/1024/1024:.2f}MB/s")
 
             # 7. Concurrent Download & Upload Tasks
@@ -168,15 +177,21 @@ class DownloadService:
                     "gcs_path": f"gs://{Config.gcs_bucket_name}/{gcs_path}",
                     "downloaded_at": datetime.utcnow()
                 })
+                # Update global stats
+                GlobalState.add_to_stats(file_size)
 
             except Exception as e:
                 download_task.cancel()
                 upload_task.cancel()
                 raise e
+            finally:
+                # Cleanup active job tracking
+                GlobalState.remove_job(message.id)
 
         except Exception:
             logger.exception(f"[{message.id}] Pipeline failed")
             await self._db.update_status(db_doc_id, DownloadStatus.FAILED)
+            GlobalState.remove_job(message.id)
 
     async def start(self):
         """Start the background workers."""

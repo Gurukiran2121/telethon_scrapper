@@ -35,27 +35,63 @@ class TelethonScrapper:
         self._scraper_config = scrapper_config
         self._db = db
         self._download_service = download_service
+        self._valid_chats = []
+
+    async def add_chat(self, chat_identifier: str):
+        """Dynamically add a new chat to the scraper."""
+        try:
+            entity = await self._client.get_entity(chat_identifier)
+            if entity not in self._valid_chats:
+                self._valid_chats.append(entity)
+                
+                # Update event handler to include the new chat
+                self._client.remove_event_handler(self.handle_event)
+                self._client.add_event_handler(
+                    self.handle_event, events.NewMessage(chats=self._valid_chats)
+                )
+                
+                logger.info(f"Dynamically added chat: {chat_identifier}")
+                
+                # Start historical scraping for this new chat in background
+                asyncio.create_task(self.scrape_history_for_chat(entity))
+                return True
+        except Exception as e:
+            logger.error(f"Failed to add chat {chat_identifier}: {e}")
+            return False
+
+    async def scrape_history_for_chat(self, entity):
+        """Scrape history for a specific entity."""
+        if not self._scraper_config.history_enabled:
+            return
+
+        logger.info(f"Fetching history for new chat: {entity.id}")
+        async for message in self._client.iter_messages(
+            entity,
+            limit=self._scraper_config.history_limit
+        ):
+            if message and message.media:
+                await self._handle_media(message)
 
     async def real_time_scrapping(self):
-        valid_chats = []
+        self._valid_chats = []
 
         for chat in self._scraper_config.chats:
             try:
                 entity = await self._client.get_entity(chat)
-                valid_chats.append(entity)
+                self._valid_chats.append(entity)
             except Exception:
                 logger.error(f"Invalid chat skipped: {chat}")
 
-        if not valid_chats:
+        if not self._valid_chats:
             logger.warning("No valid chats found.")
-            return
+            # Even if no chats, we should keep the client running to allow dynamic additions
+            # but we need at least one handler or use run_until_disconnected
+        else:
+            self._client.add_event_handler(
+                self.handle_event, events.NewMessage(chats=self._valid_chats)
+            )
+            logger.info(f"Realtime scraping started for {len(self._valid_chats)} chats")
 
-        self._client.add_event_handler(
-            self.handle_event, events.NewMessage(chats=valid_chats)
-        )
-
-        logger.info(f"Realtime scraping started for {len(valid_chats)} chats")
-        # Note: run_until_disconnected should be called in main or handled appropriately
         await self._client.run_until_disconnected()
 
     async def historical_scrapping(self):
@@ -63,30 +99,13 @@ class TelethonScrapper:
             logger.info("Historical scraping disabled.")
             return
 
-        valid_chats = []
-
-        for chat in self._scraper_config.chats:
-            try:
-                entity = await self._client.get_entity(chat)
-                valid_chats.append(entity)
-            except Exception:
-                logger.error(f"Invalid chat skipped: {chat}")
-
-        if not valid_chats:
-            logger.warning("No valid chats found for history.")
+        if not self._valid_chats:
             return
 
-        logger.info(f"Starting historical scraping for {len(valid_chats)} chats")
+        logger.info(f"Starting historical scraping for {len(self._valid_chats)} chats")
 
-        for chat in valid_chats:
-            logger.info(f"Fetching history for chat: {chat.id}")
-
-            async for message in self._client.iter_messages(
-                chat,
-                limit=self._scraper_config.history_limit
-            ):
-                if message and message.media:
-                    await self._handle_media(message)
+        for chat in self._valid_chats:
+            await self.scrape_history_for_chat(chat)
 
         logger.info("Historical scraping completed.")
 
@@ -147,7 +166,7 @@ class TelethonScrapper:
 
         mongo_data = {
             "chat_type": type(chat).__name__,
-            "chat_name": getattr(chat, "username", None) or "unknown",
+            "chat_name": getattr(chat, "username", None) or getattr(chat, "title", "unknown"),
             "message_id": message.id,
             "message_date": message.date,
             "scraped_at": datetime.utcnow(),
@@ -185,6 +204,8 @@ class TelethonScrapper:
         return None
 
     async def run(self):
-        # We start historical scraping in a task so it doesn't block real-time scraping setup
-        asyncio.create_task(self.historical_scrapping())
+        # Initial setup of valid chats
         await self.real_time_scrapping()
+        # Historical scrapping is now triggered by real_time_scrapping initialization
+        # but we also want it for the initial batch:
+        asyncio.create_task(self.historical_scrapping())
