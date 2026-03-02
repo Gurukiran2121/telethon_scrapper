@@ -19,6 +19,10 @@ async def main():
     await mongo.init()
     logger.info("MongoDB initialized...")
 
+    # 1a. Fetch Dynamic Scraper Settings
+    scraper_settings = await mongo.get_settings()
+    logger.info(f"Scraper settings loaded from DB: {scraper_settings.chats}")
+
     # 2. Initialize Telethon Client
     client = TelegramClient(
         session=Config.session_name,
@@ -52,7 +56,7 @@ async def main():
     telethon = TelethonScrapper(
         client=client,
         config=Config, 
-        scrapper_config=ScraperConfig, 
+        scrapper_config=scraper_settings, 
         db=mongo,
         download_service=download_service
     )

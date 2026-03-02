@@ -15,9 +15,10 @@ from telethon.tl.types import (
     User,
 )
 
-from src.core.srrapper_config import ChatType, MediaType, ScraperSettings
+from src.core.srrapper_config import ChatType, MediaType
 from src.schema.telethon_schema import ConfigSchema
 from src.db.mongo.message_model import DownloadStatus
+from src.db.mongo.settings_model import MongoScraperSettings
 from src.services.download import DownloadService
 
 
@@ -26,7 +27,7 @@ class TelethonScrapper:
         self, 
         client: TelegramClient,
         config: ConfigSchema, 
-        scrapper_config: ScraperSettings, 
+        scrapper_config: MongoScraperSettings, 
         db,
         download_service: DownloadService
     ):
@@ -38,9 +39,16 @@ class TelethonScrapper:
         self._valid_chats = []
 
     async def add_chat(self, chat_identifier: str):
-        """Dynamically add a new chat to the scraper."""
+        """Dynamically add a new chat to the scraper and persist to DB."""
         try:
             entity = await self._client.get_entity(chat_identifier)
+            
+            # Persist to DB if not already there
+            if chat_identifier not in self._scraper_config.chats:
+                self._scraper_config.chats.append(chat_identifier)
+                await self._scraper_config.save()
+                logger.info(f"Persisted new chat to DB: {chat_identifier}")
+
             if entity not in self._valid_chats:
                 self._valid_chats.append(entity)
                 
@@ -50,7 +58,7 @@ class TelethonScrapper:
                     self.handle_event, events.NewMessage(chats=self._valid_chats)
                 )
                 
-                logger.info(f"Dynamically added chat: {chat_identifier}")
+                logger.info(f"Dynamically activated chat: {chat_identifier}")
                 
                 # Start historical scraping for this new chat in background
                 asyncio.create_task(self.scrape_history_for_chat(entity))

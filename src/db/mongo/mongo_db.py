@@ -3,6 +3,7 @@ from beanie import init_beanie , PydanticObjectId
 from typing import Optional, List
 from motor.motor_asyncio import AsyncIOMotorClient
 from src.db.mongo.message_model import MongoMessageMedia
+from src.db.mongo.settings_model import MongoScraperSettings
 from datetime import datetime
 from pymongo.errors import DuplicateKeyError
 from loguru import logger
@@ -17,8 +18,16 @@ class MongoDB(BaseDB):
     async def init(self):
         await init_beanie(
             database=self.__db,
-            document_models=[MongoMessageMedia]
+            document_models=[MongoMessageMedia, MongoScraperSettings]
         )
+    
+    async def get_settings(self) -> MongoScraperSettings:
+        settings = await MongoScraperSettings.find_one()
+        if not settings:
+            settings = MongoScraperSettings()
+            await settings.insert()
+            logger.info("Initialized default scraper settings in DB.")
+        return settings
     
 
     """
