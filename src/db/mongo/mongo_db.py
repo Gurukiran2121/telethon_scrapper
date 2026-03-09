@@ -4,6 +4,7 @@ from typing import Optional, List
 from motor.motor_asyncio import AsyncIOMotorClient
 from src.db.mongo.message_model import MongoMessageMedia
 from src.db.mongo.settings_model import MongoScraperSettings
+from src.db.mongo.auth_model import MongoAuthConfig
 from datetime import datetime
 from pymongo.errors import DuplicateKeyError
 from loguru import logger
@@ -18,7 +19,7 @@ class MongoDB(BaseDB):
     async def init(self):
         await init_beanie(
             database=self.__db,
-            document_models=[MongoMessageMedia, MongoScraperSettings]
+            document_models=[MongoMessageMedia, MongoScraperSettings, MongoAuthConfig]
         )
     
     async def get_settings(self) -> MongoScraperSettings:
@@ -28,6 +29,19 @@ class MongoDB(BaseDB):
             await settings.insert()
             logger.info("Initialized default scraper settings in DB.")
         return settings
+
+    async def get_auth_config(self) -> Optional[MongoAuthConfig]:
+        return await MongoAuthConfig.find().sort("-updated_at").first_or_none()
+
+    async def upsert_auth_config(self, data: dict) -> MongoAuthConfig:
+        existing = await MongoAuthConfig.find_one()
+        if existing:
+            data["updated_at"] = datetime.utcnow()
+            await existing.set(data)
+            return existing
+
+        doc = MongoAuthConfig(**data)
+        return await doc.insert()
     
 
     """

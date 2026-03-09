@@ -1,0 +1,32 @@
+* {
+  box-sizing: border-box;
+}
+
+body {
+  margin: 0;
+  background: #f5f5f5;
+}
+
+.app-layout {
+  min-height: 100vh;
+}
+
+.app-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 0 24px;
+  background: #ffffff;
+  border-bottom: 1px solid #e5e5e5;
+}
+
+.app-content {
+  max-width: 1200px;
+  margin: 16px auto 24px;
+  padding: 0 24px;
+}
+
+.auth-wrap {
+  display: grid;
+  gap: 16px;
+}
