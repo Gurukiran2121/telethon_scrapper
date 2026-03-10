@@ -53,6 +53,7 @@ export default function App() {
   const [availableChats, setAvailableChats] = useState([]);
   const [enabledChats, setEnabledChats] = useState([]);
   const [activeJobs, setActiveJobs] = useState([]);
+  const [scraperConfig, setScraperConfig] = useState(null);
 
   const loadAvailableChats = async () => {
     const data = await fetchJson("/available-chats?limit=300");
@@ -69,6 +70,11 @@ export default function App() {
     setActiveJobs(Array.isArray(data) ? data : []);
   };
 
+  const loadConfig = async () => {
+    const data = await fetchJson("/config");
+    setScraperConfig(data || null);
+  };
+
   const refreshDashboard = async () => {
     try {
       setError("");
@@ -76,6 +82,7 @@ export default function App() {
         loadAvailableChats(),
         loadEnabledChats(),
         loadActiveJobs(),
+        loadConfig(),
       ]);
     } catch (err) {
       setError(err.message || "Failed to load dashboard data");
@@ -234,6 +241,18 @@ export default function App() {
 
   const dashboardVisible = isAuthorized;
 
+  const enabledMediaTypes = Object.entries(
+    scraperConfig?.media_types || {},
+  ).filter(([, enabled]) => Boolean(enabled));
+
+  const enabledChatTypes = scraperConfig?.chat_types || [];
+
+  const renderBoolTag = (value) => (
+    <Tag color={value ? "green" : "default"}>
+      {value ? "Enabled" : "Disabled"}
+    </Tag>
+  );
+
   return (
     <Layout className="app-layout">
       <Header className="app-header">
@@ -359,6 +378,59 @@ export default function App() {
 
         {dashboardVisible ? (
           <div className="dashboard-grid">
+            <Card title="Scraper Config" className="grid-card">
+              {scraperConfig ? (
+                <Space direction="vertical" style={{ width: "100%" }}>
+                  <div>
+                    <Text type="secondary">Media Scraping</Text>
+                    <div>{renderBoolTag(scraperConfig.media_enabled)}</div>
+                  </div>
+                  <div>
+                    <Text type="secondary">Download Media</Text>
+                    <div>{renderBoolTag(scraperConfig.download_media)}</div>
+                  </div>
+                  <div>
+                    <Text type="secondary">History Scraping</Text>
+                    <div>{renderBoolTag(scraperConfig.history_enabled)}</div>
+                  </div>
+                  <div>
+                    <Text type="secondary">Media Types</Text>
+                    <div>
+                      {enabledMediaTypes.length ? (
+                        enabledMediaTypes.map(([key]) => (
+                          <Tag key={key}>{String(key).toUpperCase()}</Tag>
+                        ))
+                      ) : (
+                        <Text type="secondary">None</Text>
+                      )}
+                    </div>
+                  </div>
+                  <div>
+                    <Text type="secondary">Chat Types</Text>
+                    <div>
+                      {enabledChatTypes.length ? (
+                        enabledChatTypes.map((key) => (
+                          <Tag key={key}>{String(key).toUpperCase()}</Tag>
+                        ))
+                      ) : (
+                        <Text type="secondary">None</Text>
+                      )}
+                    </div>
+                  </div>
+                  <div>
+                    <Text type="secondary">Min File Size (KB)</Text>
+                    <div>{scraperConfig.min_file_size_kb ?? "-"}</div>
+                  </div>
+                  <div>
+                    <Text type="secondary">Max File Size (MB)</Text>
+                    <div>{scraperConfig.max_file_size_mb ?? "-"}</div>
+                  </div>
+                </Space>
+              ) : (
+                <Text type="secondary">No config available.</Text>
+              )}
+            </Card>
+
             <Card title="Available Channels" className="grid-card grid-span-2">
               <Table
                 columns={availableChatColumns}
