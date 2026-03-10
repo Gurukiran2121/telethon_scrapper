@@ -72,13 +72,21 @@ class TelethonScrapper:
         if not self._scraper_config.history_enabled:
             return
 
+        if not self._client.is_connected():
+            return
+
         logger.info(f"Fetching history for new chat: {entity.id}")
-        async for message in self._client.iter_messages(
-            entity,
-            limit=self._scraper_config.history_limit
-        ):
-            if message and message.media:
-                await self._handle_media(message)
+        try:
+            async for message in self._client.iter_messages(
+                entity,
+                limit=self._scraper_config.history_limit
+            ):
+                if message and message.media:
+                    await self._handle_media(message)
+        except ConnectionError:
+            logger.warning("History scraping stopped: client disconnected")
+        except Exception:
+            logger.exception("History scraping failed")
 
     async def real_time_scrapping(self):
         self._valid_chats = []
@@ -110,14 +118,22 @@ class TelethonScrapper:
         if not self._valid_chats:
             return
 
+        if not self._client.is_connected():
+            return
+
         logger.info(f"Starting historical scraping for {len(self._valid_chats)} chats")
 
         for chat in self._valid_chats:
+            if not self._client.is_connected():
+                logger.info("Historical scraping stopped: client disconnected")
+                break
             await self.scrape_history_for_chat(chat)
 
         logger.info("Historical scraping completed.")
 
     async def handle_event(self, event):
+        if not self._client.is_connected():
+            return
         message = event.message
         logger.info(f"New message received | chat_id={event.chat_id}")
 
