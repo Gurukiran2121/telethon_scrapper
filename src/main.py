@@ -17,10 +17,6 @@ async def main():
     await mongo.init()
     logger.info("MongoDB initialized...")
 
-    # 1a. Fetch Dynamic Scraper Settings
-    scraper_settings = await mongo.get_settings()
-    logger.info(f"Scraper settings loaded from DB: {scraper_settings.chats}")
-
     # 2. Initialize Auth Manager and API
     auth_manager = AuthManager(db=mongo)
     app = create_app(scrapper=None, db=mongo, auth_manager=auth_manager)
@@ -34,6 +30,12 @@ async def main():
     # 3. Wait for authorized client (via /auth/start + /auth/verify)
     client = await auth_manager.get_authorized_client()
     logger.info("Telegram client authorized")
+
+    status = await auth_manager.get_auth_status()
+    owner_phone = status.get("phone_number") if status.get("authorized") else None
+
+    scraper_settings = await mongo.get_settings(owner_phone)
+    logger.info(f"Scraper settings loaded from DB: {scraper_settings.chats}")
 
     # 4. Initialize High-Performance Download Service
     download_service = DownloadService(

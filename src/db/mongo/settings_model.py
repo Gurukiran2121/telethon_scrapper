@@ -4,6 +4,7 @@ from pydantic import Field
 from src.core.srrapper_config import MediaType, ChatType
 
 class MongoScraperSettings(Document):
+    owner_phone: Optional[str] = None
     media_enabled: bool = True
     media_types: Dict[MediaType, bool] = Field(
         default_factory=lambda: {

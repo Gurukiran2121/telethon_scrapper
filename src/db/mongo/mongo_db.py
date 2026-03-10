@@ -22,7 +22,27 @@ class MongoDB(BaseDB):
             document_models=[MongoMessageMedia, MongoScraperSettings, MongoAuthConfig]
         )
     
-    async def get_settings(self) -> MongoScraperSettings:
+    async def get_settings(self, owner_phone: Optional[str] = None) -> MongoScraperSettings:
+        if owner_phone:
+            settings = await MongoScraperSettings.find_one(
+                MongoScraperSettings.owner_phone == owner_phone
+            )
+            if settings:
+                return settings
+
+            legacy = await MongoScraperSettings.find_one(
+                MongoScraperSettings.owner_phone == None
+            )
+            if legacy:
+                legacy.owner_phone = owner_phone
+                await legacy.save()
+                return legacy
+
+            settings = MongoScraperSettings(owner_phone=owner_phone)
+            await settings.insert()
+            logger.info("Initialized default scraper settings in DB for phone.")
+            return settings
+
         settings = await MongoScraperSettings.find_one()
         if not settings:
             settings = MongoScraperSettings()
@@ -33,8 +53,13 @@ class MongoDB(BaseDB):
     async def get_auth_config(self) -> Optional[MongoAuthConfig]:
         return await MongoAuthConfig.find().sort("-updated_at").first_or_none()
 
+    async def get_auth_config_by_phone(self, phone_number: str) -> Optional[MongoAuthConfig]:
+        return await MongoAuthConfig.find_one(MongoAuthConfig.phone_number == phone_number)
+
     async def upsert_auth_config(self, data: dict) -> MongoAuthConfig:
-        existing = await MongoAuthConfig.find_one()
+        existing = await MongoAuthConfig.find_one(
+            MongoAuthConfig.phone_number == data.get("phone_number")
+        )
         if existing:
             data["updated_at"] = datetime.utcnow()
             await existing.set(data)

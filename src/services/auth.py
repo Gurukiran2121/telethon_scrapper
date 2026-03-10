@@ -17,6 +17,8 @@ class AuthManager:
         self._authorized_client: Optional[TelegramClient] = None
         self._authorized_event = asyncio.Event()
         self._lock = asyncio.Lock()
+        self._current_phone: Optional[str] = None
+        self._current_session: Optional[str] = None
 
     async def start_auth(
         self,
@@ -46,6 +48,9 @@ class AuthManager:
                 }
             )
 
+            self._current_phone = phone_number
+            self._current_session = session_name
+
         logger.info(f"OTP sent for {phone_number}")
         return session_name
 
@@ -70,6 +75,7 @@ class AuthManager:
             self._authorized_client = client
             self._authorized_event.set()
             self._pending.pop(phone_number, None)
+            self._current_phone = phone_number
 
         logger.info(f"Auth verified for {phone_number}")
         return True
@@ -88,6 +94,8 @@ class AuthManager:
             await client.connect()
             if await client.is_user_authorized():
                 self._authorized_client = client
+                self._current_phone = auth_config.phone_number
+                self._current_session = auth_config.session_name
                 return client
 
         # Fallback to environment config if no auth config exists
@@ -100,6 +108,8 @@ class AuthManager:
             await client.connect()
             if await client.is_user_authorized():
                 self._authorized_client = client
+                self._current_phone = Config.phone_number
+                self._current_session = Config.session_name
                 return client
             await client.disconnect()
         except Exception:
@@ -107,6 +117,49 @@ class AuthManager:
 
         await self._authorized_event.wait()
         return self._authorized_client
+
+    async def get_auth_status(self) -> dict:
+        if self._authorized_client:
+            return {
+                "authorized": True,
+                "phone_number": self._current_phone,
+                "session_name": self._current_session,
+            }
+
+        auth_config = await self._db.get_auth_config()
+        if auth_config:
+            client = TelegramClient(
+                session=auth_config.session_name,
+                api_id=auth_config.api_id,
+                api_hash=auth_config.api_hash,
+            )
+            await client.connect()
+            if await client.is_user_authorized():
+                self._authorized_client = client
+                self._current_phone = auth_config.phone_number
+                self._current_session = auth_config.session_name
+                return {
+                    "authorized": True,
+                    "phone_number": self._current_phone,
+                    "session_name": self._current_session,
+                }
+            await client.disconnect()
+
+        return {"authorized": False}
+
+    async def logout(self) -> None:
+        if not self._authorized_client:
+            return
+
+        try:
+            await self._authorized_client.log_out()
+        except Exception:
+            await self._authorized_client.disconnect()
+
+        self._authorized_client = None
+        self._authorized_event = asyncio.Event()
+        self._current_phone = None
+        self._current_session = None
 
     def _default_session_name(self, phone_number: str) -> str:
         digits = re.sub(r"[^0-9]", "", phone_number)

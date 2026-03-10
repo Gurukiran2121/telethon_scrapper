@@ -102,11 +102,17 @@ def create_app(scrapper, db, auth_manager):
     @app.get("/enabled-chats")
     async def get_enabled_chats():
         """List chats enabled in config (persisted)."""
-        if app.state.scrapper:
+        status = await app.state.auth_manager.get_auth_status()
+        owner_phone = status.get("phone_number") if status.get("authorized") else None
+
+        if app.state.scrapper and owner_phone:
             return app.state.scrapper._scraper_config.chats
 
-        settings = await app.state.db.get_settings()
-        return settings.chats
+        if owner_phone:
+            settings = await app.state.db.get_settings(owner_phone)
+            return settings.chats
+
+        return []
 
     @app.get("/available-chats")
     async def get_available_chats(limit: int = 200, include_users: bool = False):
@@ -177,6 +183,18 @@ def create_app(scrapper, db, auth_manager):
             raise HTTPException(status_code=500, detail=str(e))
 
         return {"status": "authorized"}
+
+    @app.get("/auth/status")
+    async def auth_status():
+        """Check whether a session is already authorized."""
+        status = await app.state.auth_manager.get_auth_status()
+        return status
+
+    @app.post("/auth/logout")
+    async def auth_logout():
+        """Logout the current session."""
+        await app.state.auth_manager.logout()
+        return {"status": "logged_out"}
 
     if index_file.exists():
         @app.get("/")
